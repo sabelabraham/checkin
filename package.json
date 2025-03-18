@@ -1,0 +1,12 @@
+{
+  "name": "keyboard-printer-v2",
+  "version": "1.0.0",
+  "description": "Keyboard input printer with PDF support",
+  "main": "keyboard-printer-v2.js",
+  "dependencies": {
+    "axios": "^1.8.3",
+    "node-thermal-printer": "^4.3.5",
+    "pdf-parse": "^1.1.1",
+    "usb": "^2.11.0"
+  }
+}
