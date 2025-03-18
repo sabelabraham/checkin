@@ -1,0 +1,21 @@
+version: '3'
+services:
+  keyboard-printer:
+    image: asabel/checkin:latest
+    privileged: true
+    devices:
+      - /dev/input:/dev/input
+      - /dev/usb:/dev/usb
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - /dev/input:/dev/input
+      - /dev/usb:/dev/usb
+      - /dev/bus/usb:/dev/bus/usb
+    environment:
+      - NODE_ENV=production
+    cap_add:
+      - ALL
+    security_opt:
+      - seccomp:unconfined
+    network_mode: "host"
+    restart: unless-stopped 
