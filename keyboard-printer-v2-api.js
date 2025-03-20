@@ -6,6 +6,7 @@ const usb = require('usb');
 const { ThermalPrinter, PrinterTypes, CharacterSet } = require('node-thermal-printer');
 const pdf = require('pdf-parse');
 const axios = require('axios');
+const sharp = require('sharp');
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 
 // Function to process and print PDF file
@@ -306,69 +307,137 @@ async function createAndPrintPDF(text, printer) {
     }
 }
 
+// Function to print PNG image to Epson printer
+async function printPNGToEpson(imageBuffer, printer) {
+    try {
+        console.log('Processing PNG image for printing...');
+        
+        // Save the image buffer to a temporary file
+        const tempImagePath = `/tmp/print_${Date.now()}.png`;
+        fs.writeFileSync(tempImagePath, imageBuffer);
+        
+        try {
+            // Create thermal printer instance
+            const thermalPrinter = new ThermalPrinter({
+                type: PrinterTypes.EPSON,
+                interface: printer.devicePath,
+                characterSet: CharacterSet.PC437_USA,
+                removeSpecialCharacters: false,
+                lineCharacter: '-',
+                width: 48,  // Standard width for 80mm paper
+                options: {
+                    timeout: 5000
+                }
+            });
+
+            // Check if printer is connected
+            const isConnected = await thermalPrinter.isPrinterConnected();
+            if (!isConnected) {
+                throw new Error("Printer is not connected!");
+            }
+
+            // Reset printer settings
+            await thermalPrinter.clear();
+            
+            // Print the image with high density
+            console.log("Printing image...");
+            await thermalPrinter.printImage(tempImagePath, true); // true = high density printing
+            
+            // Feed paper and cut
+            console.log("Feeding paper and cutting...");
+            //await thermalPrinter.println('\n\n\n\n\n\n\n\n\n\n');
+            await thermalPrinter.cut({verticalTabAmount:1});
+            
+            // Execute the print job and clear buffer
+            console.log("Executing print job...");
+            await thermalPrinter.execute();
+            await thermalPrinter.clear(); // Clear any remaining data in the buffer
+            
+            console.log('Image sent to printer successfully');
+            return true;
+        } finally {
+            // Clean up temporary file
+            if (fs.existsSync(tempImagePath)) {
+                fs.unlinkSync(tempImagePath);
+            }
+        }
+    } catch (err) {
+        console.error('Error printing PNG:', err.message);
+        console.error('Stack trace:', err.stack);
+        return false;
+    }
+}
+
 // Function to make API call and print response
 async function makeApiCallAndPrint(barcode, printer) {
     try {
         console.log(`Making API call for barcode: ${barcode}`);
-        const response = await axios.get(`https://api-oa.com/itextpdf2/en/generatePdf?requestType=result&pid=4033504562984884809&blocks=detail&callback=alp.jsonp[-1272062882]&ids=1373510&language=en&layout=tour&maptype=summer&qmap=&reload_cnt=0_0.74261605552917081742254704078&scale=s25k&workplace=api-dev-oa&filename=en-around-immenstadt.pdf`, {
+        const response = await axios.get(`https://api.kovetzalyad.org/api/checkin?barcode=${barcode}`, {
             responseType: 'arraybuffer'
         });
         
-        // Check if the response is a PDF
+        // Check content type of response
         const contentType = response.headers['content-type'];
-        if (contentType && contentType.includes('application/pdf')) {
-            console.log('Received PDF response, converting and printing...');
-            
-            // Save PDF temporarily
-            const tempPdfPath = `/tmp/print_${Date.now()}.pdf`;
-            fs.writeFileSync(tempPdfPath, response.data);
-            
-            try {
-                // Print using direct commands
-                console.log('Sending to printer...');
-                const fd = fs.openSync(printer.devicePath, 'w');
+        if (contentType) {
+            if (contentType.includes('application/pdf')) {
+                console.log('Received PDF response, converting and printing...');
+                // Save PDF temporarily
+                const tempPdfPath = `/tmp/print_${Date.now()}.pdf`;
+                fs.writeFileSync(tempPdfPath, response.data);
                 
-                // Initialize printer
-                const initCommands = Buffer.from([
-                    0x1B, 0x40,        // Initialize printer
-                    0x1B, 0x4C,        // Select page mode
-                    0x1B, 0x54, 0x00,  // Select print direction (normal)
-                    0x1B, 0x61, 0x01   // Center alignment
-                ]);
-                fs.writeSync(fd, initCommands);
-                
-                // Convert PDF to text and print it
-                console.log('Converting PDF to text...');
-                const pdfData = await pdf(fs.readFileSync(tempPdfPath));
-                const textToPrint = 
-                    "PDF Document\n" +
-                    "============\n" +
-                    `Pages: ${pdfData.numpages}\n` +
-                    "============\n\n" +
-                    pdfData.text;
-                
-                // Format and send the text
-                const formattedText = Buffer.from(textToPrint);
-                fs.writeSync(fd, formattedText);
-                
-                // Print and exit page mode
-                fs.writeSync(fd, Buffer.from([0x0C]));  // FF - Print and return to standard mode
-                
-                // Feed and cut
-                const endCommands = Buffer.from([
-                    0x0A, 0x0A, 0x0A, 0x0A,  // Feed lines
-                    0x1D, 0x56, 0x00         // Full cut
-                ]);
-                fs.writeSync(fd, endCommands);
-                
-                fs.closeSync(fd);
-                console.log('Print data sent successfully');
-            } finally {
-                // Clean up temporary files
-                if (fs.existsSync(tempPdfPath)) fs.unlinkSync(tempPdfPath);
+                try {
+                    // Print using direct commands
+                    console.log('Sending to printer...');
+                    const fd = fs.openSync(printer.devicePath, 'w');
+                    
+                    // Initialize printer
+                    const initCommands = Buffer.from([
+                        0x1B, 0x40,        // Initialize printer
+                        0x1B, 0x4C,        // Select page mode
+                        0x1B, 0x54, 0x00,  // Select print direction (normal)
+                        0x1B, 0x61, 0x01   // Center alignment
+                    ]);
+                    fs.writeSync(fd, initCommands);
+                    
+                    // Convert PDF to text and print it
+                    console.log('Converting PDF to text...');
+                    const pdfData = await pdf(fs.readFileSync(tempPdfPath));
+                    const textToPrint = 
+                        "PDF Document\n" +
+                        "============\n" +
+                        `Pages: ${pdfData.numpages}\n` +
+                        "============\n\n" +
+                        pdfData.text;
+                    
+                    // Format and send the text
+                    const formattedText = Buffer.from(textToPrint);
+                    fs.writeSync(fd, formattedText);
+                    
+                    // Print and exit page mode
+                    fs.writeSync(fd, Buffer.from([0x0C]));  // FF - Print and return to standard mode
+                    
+                    // Feed and cut
+                    const endCommands = Buffer.from([
+                        0x0A, 0x0A, 0x0A, 0x0A,  // Feed lines
+                        0x1D, 0x56, 0x00         // Full cut
+                    ]);
+                    fs.writeSync(fd, endCommands);
+                    
+                    fs.closeSync(fd);
+                    console.log('Print data sent successfully');
+                } finally {
+                    // Clean up temporary files
+                    if (fs.existsSync(tempPdfPath)) fs.unlinkSync(tempPdfPath);
+                }
+            } else if (contentType.includes('image/png')) {
+                console.log('Received PNG response, printing...');
+                return await printPNGToEpson(response.data, printer);
+            } else {
+                console.log('Response is not a PDF or PNG, printing as text...');
+                await printToEpson(response.data.toString(), printer);
             }
         } else {
-            console.log('Response is not a PDF, printing as text...');
+            console.log('No content type specified, printing as text...');
             await printToEpson(response.data.toString(), printer);
         }
         
